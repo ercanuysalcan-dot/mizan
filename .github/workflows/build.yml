@@ -64,12 +64,16 @@ jobs:
       - name: Kod analizi
         id: analyze
         continue-on-error: true
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee analyze.log
 
       - name: Testler
         id: test
         continue-on-error: true
-        run: flutter test
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee test.log
 
       - name: Web icin SQLite dosyalari
         run: |
@@ -78,13 +82,23 @@ jobs:
           curl -fsSL -o web/sqlite3.wasm "https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-$V/sqlite3.wasm"
           dart compile js -O4 -o web/drift_worker.js tools/drift_worker.dart
 
+      - name: Android NDK surumu
+        run: |
+          sed -i -E 's/ndkVersion = flutter\.ndkVersion/ndkVersion = "27.0.12077973"/' android/app/build.gradle.kts || true
+          grep -n "ndkVersion" android/app/build.gradle.kts || true
+
       - name: APK derle
-        run: flutter build apk --release
+        id: apk
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee apk.log
 
       - name: Web derle
         run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 
       - name: APK'yi siteye ekle
+        if: steps.apk.outcome == 'success'
         run: cp build/app/outputs/flutter-apk/app-release.apk build/web/mizan.apk
 
       - uses: actions/upload-pages-artifact@v3
@@ -95,8 +109,18 @@ jobs:
         id: deploy
         uses: actions/deploy-pages@v4
 
-      - name: Analiz / test sonucu
-        if: steps.analyze.outcome == 'failure' || steps.test.outcome == 'failure'
+      # Hatalari herkese acik "annotation" olarak yazar (Claude okuyabilsin diye)
+      - name: Hata ozeti
+        if: always()
         run: |
-          echo "::error::Uygulama yayinlandi ama analiz veya testlerde hata var. 'Kod analizi' ve 'Testler' adimlarini acip ekran goruntusunu Claude'a gonder."
-          exit 1
+          report() {
+            [ -f "$2" ] || return 0
+            msg=$(grep -E "$3" "$2" | head -n 45 | cut -c1-260 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            if [ -n "$msg" ]; then echo "::error title=$1::$msg"; fi
+          }
+          fail=0
+          if [ "${{ steps.analyze.outcome }}" = "failure" ]; then fail=1; report Analiz analyze.log "(error|warning) [-•]"; fi
+          if [ "${{ steps.test.outcome }}" = "failure" ]; then fail=1; report Testler test.log "\[E\]|Expected|Actual|Error|error:|Exception|Failed"; fi
+          if [ "${{ steps.apk.outcome }}" = "failure" ]; then fail=1; report APK apk.log "rror|What went wrong|FAILURE|Exception|> "; fi
+          echo "analiz=${{ steps.analyze.outcome }} test=${{ steps.test.outcome }} apk=${{ steps.apk.outcome }}"
+          exit $fail
