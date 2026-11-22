@@ -1,7 +1,5 @@
 name: Derle ve yayinla
 
-# main dalina her gonderimde (veya Actions sekmesinden elle) calisir:
-# sema testi -> analiz -> testler -> APK -> Web -> GitHub Pages
 on:
   push:
     branches: [main]
@@ -24,7 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Telefondan yalnizca zip yuklendiyse once onu ac
       - name: Zip varsa ac
         run: |
           Z=$(ls *.zip 2>/dev/null | head -n 1 || true)
@@ -48,8 +45,6 @@ jobs:
       - name: SQLite kutuphanesi (testler icin)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-dev
 
-      # flutter create web/index.html, manifest.json ve flutter_bootstrap.js
-      # dosyalarini sablonla degistiriyor; bizimkileri yedekleyip geri koy.
       - name: Platform klasorleri (android, web)
         run: |
           cp -r web /tmp/web_ozel
@@ -101,7 +96,7 @@ jobs:
           flutter build apk --release 2>&1 | tee apk.log
 
       - name: Web derle
-        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+        run: flutter build web --release --no-web-resources-cdn --base-href "/${{ github.event.repository.name }}/"
 
       - name: APK'yi siteye ekle
         if: steps.apk.outcome == 'success'
@@ -115,7 +110,6 @@ jobs:
         id: mark
         run: echo "ready=true" >> "$GITHUB_OUTPUT"
 
-      # Hatalari herkese acik "annotation" olarak yazar (Claude okuyabilsin diye)
       - name: Hata ozeti
         if: always()
         run: |
@@ -131,8 +125,6 @@ jobs:
           echo "analiz=${{ steps.analyze.outcome }} test=${{ steps.test.outcome }} apk=${{ steps.apk.outcome }}"
           exit $fail
 
-  # GitHub'in onerdigi gibi yayin ayri iste. Testler kirmizi olsa bile
-  # web paketi hazirsa site yayinlanir.
   deploy:
     needs: build
     if: ${{ always() && needs.build.outputs.web_ready == 'true' }}
