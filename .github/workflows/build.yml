@@ -1,1 +1,102 @@
+name: Derle ve yayinla
 
+# main dalina her gonderimde (veya Actions sekmesinden elle) calisir:
+# sema testi -> analiz -> testler -> APK -> Web -> GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Telefondan yalnizca zip yuklendiyse once onu ac
+      - name: Zip varsa ac
+        run: |
+          Z=$(ls *.zip 2>/dev/null | head -n 1 || true)
+          if [ -n "$Z" ]; then
+            echo "Aciliyor: $Z"
+            unzip -oq "$Z" -d /tmp/z
+            cp -r /tmp/z/mizan/. .
+          fi
+          test -f pubspec.yaml || { echo "::error::Proje dosyalari bulunamadi. mizan.zip yuklendi mi?"; exit 1; }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: SQLite kutuphanesi (testler icin)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-dev
+
+      - name: Platform klasorleri (android, web)
+        run: flutter create . --platforms=android,web --project-name mizan --org com.mizan
+
+      - name: Paketler
+        run: flutter pub get
+
+      - name: Veritabani kodu uretimi
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Sema testi
+        run: python3 tools/verify_schema.py
+
+      - name: Kod analizi
+        id: analyze
+        continue-on-error: true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Testler
+        id: test
+        continue-on-error: true
+        run: flutter test
+
+      - name: Web icin SQLite dosyalari
+        run: |
+          V=$(awk '/^  sqlite3:/{f=1} f && /version:/{gsub(/"/,"",$2); print $2; exit}' pubspec.lock)
+          echo "sqlite3 surumu: $V"
+          curl -fsSL -o web/sqlite3.wasm "https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-$V/sqlite3.wasm"
+          dart compile js -O4 -o web/drift_worker.js tools/drift_worker.dart
+
+      - name: APK derle
+        run: flutter build apk --release
+
+      - name: Web derle
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      - name: APK'yi siteye ekle
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/web/mizan.apk
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - name: GitHub Pages'e yayinla
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Analiz / test sonucu
+        if: steps.analyze.outcome == 'failure' || steps.test.outcome == 'failure'
+        run: |
+          echo "::error::Uygulama yayinlandi ama analiz veya testlerde hata var. 'Kod analizi' ve 'Testler' adimlarini acip ekran goruntusunu Claude'a gonder."
+          exit 1
