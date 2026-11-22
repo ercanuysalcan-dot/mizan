@@ -19,9 +19,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      web_ready: ${{ steps.mark.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
 
@@ -105,9 +104,9 @@ jobs:
         with:
           path: build/web
 
-      - name: GitHub Pages'e yayinla
-        id: deploy
-        uses: actions/deploy-pages@v4
+      - name: Site paketi hazir
+        id: mark
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
 
       # Hatalari herkese acik "annotation" olarak yazar (Claude okuyabilsin diye)
       - name: Hata ozeti
@@ -124,3 +123,17 @@ jobs:
           if [ "${{ steps.apk.outcome }}" = "failure" ]; then fail=1; report APK apk.log "rror|What went wrong|FAILURE|Exception|> "; fi
           echo "analiz=${{ steps.analyze.outcome }} test=${{ steps.test.outcome }} apk=${{ steps.apk.outcome }}"
           exit $fail
+
+  # GitHub'in onerdigi gibi yayin ayri iste. Testler kirmizi olsa bile
+  # web paketi hazirsa site yayinlanir.
+  deploy:
+    needs: build
+    if: ${{ always() && needs.build.outputs.web_ready == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: GitHub Pages'e yayinla
+        id: deploy
+        uses: actions/deploy-pages@v4
