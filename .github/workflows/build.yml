@@ -48,8 +48,15 @@ jobs:
       - name: SQLite kutuphanesi (testler icin)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-dev
 
+      # flutter create web/index.html, manifest.json ve flutter_bootstrap.js
+      # dosyalarini sablonla degistiriyor; bizimkileri yedekleyip geri koy.
       - name: Platform klasorleri (android, web)
-        run: flutter create . --platforms=android,web --project-name mizan --org com.mizan
+        run: |
+          cp -r web /tmp/web_ozel
+          flutter create . --platforms=android,web --project-name mizan --org com.mizan
+          cp -r /tmp/web_ozel/. web/
+          grep -q "mz-boot" web/index.html || { echo "::error::Ozel index.html geri yuklenemedi"; exit 1; }
+          grep -q '"Mizan"' web/manifest.json || { echo "::error::Ozel manifest.json geri yuklenemedi"; exit 1; }
 
       - name: Paketler
         run: flutter pub get
